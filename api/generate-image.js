@@ -36,17 +36,18 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ text: data.content[0].text });
     }
 
-    // ── STEP 1: DALL-E 3 — design image generation ───────
+    // ── STEP 1: GPT Image 1 — design image generation ────
     if (action === 'image') {
       const { prompt } = body;
       const response = await fetch('https://api.openai.com/v1/images/generations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}` },
-        body: JSON.stringify({ model: 'dall-e-3', prompt, n: 1, size: '1024x1024', quality: 'standard', response_format: 'url' })
+        body: JSON.stringify({ model: 'gpt-image-1', prompt, n: 1, size: '1024x1024' })
       });
       const data = await response.json();
       if (!response.ok) return res.status(response.status).json({ error: data.error?.message || 'OpenAI error' });
-      return res.status(200).json({ url: data.data[0].url });
+      // gpt-image-1 always returns b64_json
+      return res.status(200).json({ url: `data:image/png;base64,${data.data[0].b64_json}` });
     }
 
     // ── STEP 2a: Printful — upload design file ────────────
