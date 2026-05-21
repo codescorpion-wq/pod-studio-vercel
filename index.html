@@ -722,22 +722,51 @@ async function startGeneration() {
 
   try {
     setProgStep(2);
-    const inspirationContext = S.source === 'etsy'
-      ? `The seller found inspiration at this Etsy listing: ${url}`
-      : `The seller uploaded a Pinterest inspiration image (analyse the colors, style, mood, and theme from the image).`;
+    let conceptPrompt;
 
-    const conceptPrompt = `You are a creative director for a print-on-demand Etsy store.
-${inspirationContext}
+    if (S.source === 'pinterest' && S.pinImageBase64) {
+      // Pinterest image upload — Claude sees the actual image
+      // Instruct it to extract the exact text and core style, then create variations
+      conceptPrompt = `You are a creative director for a print-on-demand Etsy store. The seller has uploaded a Pinterest inspiration image. Study it carefully.
+
+STEP 1 — Extract from the image:
+- The exact text / slogan shown (copy it word for word, preserve the language and script — Roman, Devanagari, etc.)
+- The dominant colors (background color, text color, accent colors)
+- The overall graphic style (typography-only, illustration, vintage, minimalist, etc.)
+
+STEP 2 — Create 5 design variations for a ${S.productType} that:
+- Use the SAME text/slogan you extracted (do not change the words or language)
+- Keep the same dominant color palette
+- Each has a DIFFERENT graphic treatment / style (e.g. bold block type, retro badge, brush script, neon glow, hand-drawn)
+${notes ? `Seller notes: ${notes}` : ''}
+
+For each variation write a GPT Image prompt that produces a FLAT GRAPHIC ARTWORK for ${S.productType} printing. Each prompt MUST:
+- State the exact text to display (copied from the image)
+- Specify the colors
+- Include "flat graphic design", "white background", "no people", "print-ready artwork"
+- Be 50-70 words
+
+Return ONLY a JSON array:
+[{"id":1,"name":"Design name (2-4 words)","style":"Style label","imagePrompt":"Full image prompt here"}]`;
+
+    } else {
+      // Etsy URL — text-based analysis
+      conceptPrompt = `You are a creative director for a print-on-demand Etsy store.
+The seller found inspiration at this Etsy listing: ${url}
 Product to design: ${S.productType}
 ${notes ? `Seller notes: ${notes}` : ''}
-Create EXACTLY 5 completely different graphic design concepts for a ${S.productType} print. Each must be a totally different visual style.
-For each concept write a DALL-E 3 image prompt that produces a FLAT GRAPHIC ARTWORK suitable for ${S.productType} printing. The prompt MUST:
-- Describe a flat 2D graphic design or illustration only
-- Include "flat vector graphic", "white background", "no people", "print-ready artwork"
-- Be specific about colors, style, and graphic elements
-- Be 40-60 words
+
+Create EXACTLY 5 completely different graphic design concepts for a ${S.productType} print. Each must be a totally different visual style but stay true to the theme and niche of the inspiration listing.
+
+For each concept write a GPT Image prompt that produces a FLAT GRAPHIC ARTWORK suitable for ${S.productType} printing. The prompt MUST:
+- Include a bold readable slogan or text relevant to the niche
+- Include "flat graphic design", "white background", "no people", "print-ready artwork"
+- Be specific about colors, typography style, and graphic elements
+- Be 50-70 words
+
 Return ONLY a JSON array:
-[{"id":1,"name":"Design name (2-4 words)","style":"Style label","imagePrompt":"Full DALL-E prompt here"}]`;
+[{"id":1,"name":"Design name (2-4 words)","style":"Style label","imagePrompt":"Full image prompt here"}]`;
+    }
 
     // For Pinterest, send the uploaded image to Claude for visual analysis
     const conceptPayload = { action: 'concepts', prompt: conceptPrompt };
