@@ -262,6 +262,51 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ imageId: data.listing_image_id });
     }
 
+    // ── DIAGNOSTIC: test all Printful upload methods ─────
+    if (action === 'test-printful') {
+      // Minimal 1x1 red PNG (< 100 bytes)
+      const testB64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADklEQVQI12P4z8BQDwAEgAF/QualIQAAAABJRU5ErkJggg==';
+      const buf = Buffer.from(testB64, 'base64');
+      const blob = new Blob([buf], { type: 'image/png' });
+      const pfH = {
+        'Authorization': `Bearer ${process.env.PRINTFUL_API_KEY}`,
+        ...(process.env.PRINTFUL_STORE_ID ? { 'X-PF-Store-Id': process.env.PRINTFUL_STORE_ID } : {})
+      };
+
+      // Method A: v1 + multipart binary
+      const fdA = new FormData(); fdA.append('file', blob, 'test.png');
+      const rA = await fetch('https://api.printful.com/files', { method: 'POST', headers: pfH, body: fdA });
+      const dA = await rA.json();
+
+      // Method B: v1 + JSON contents (base64 string)
+      const rB = await fetch('https://api.printful.com/files', {
+        method: 'POST', headers: { ...pfH, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'default', filename: 'test.png', contents: testB64 })
+      });
+      const dB = await rB.json();
+
+      // Method C: v2 + JSON url (data URI)
+      const rC = await fetch('https://api.printful.com/v2/files', {
+        method: 'POST', headers: { ...pfH, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'data:image/png;base64,' + testB64, filename: 'test.png' })
+      });
+      const dC = await rC.json();
+
+      // Method D: v1 + JSON url (data URI)
+      const rD = await fetch('https://api.printful.com/files', {
+        method: 'POST', headers: { ...pfH, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'default', filename: 'test.png', url: 'data:image/png;base64,' + testB64 })
+      });
+      const dD = await rD.json();
+
+      return res.status(200).json({
+        A_v1_multipart:    { status: rA.status, result: dA },
+        B_v1_json_contents:{ status: rB.status, result: dB },
+        C_v2_json_dataurl: { status: rC.status, result: dC },
+        D_v1_json_dataurl: { status: rD.status, result: dD },
+      });
+    }
+
     return res.status(400).json({ error: 'Unknown action' });
 
   } catch (err) {
