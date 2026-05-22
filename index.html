@@ -393,9 +393,9 @@
       <div class="prog-list">
         <div class="prog-item active" id="p1"><div class="prog-dot"></div><span id="p1-text">Analysing inspiration URL</span></div>
         <div class="prog-item" id="p2"><div class="prog-dot"></div><span id="p2-text">Building 5 design concepts</span></div>
-        <div class="prog-item" id="p3"><div class="prog-dot"></div><span id="p3-text">Generating images with DALL·E 3</span></div>
-        <div class="prog-item" id="p4"><div class="prog-dot"></div><span id="p4-text">Loading results</span></div>
-        <div class="prog-item" id="p5"><div class="prog-dot"></div><span id="p5-text">Done</span></div>
+        <div class="prog-item" id="p3"><div class="prog-dot"></div><span id="p3-text">Generating images with GPT Image 1</span></div>
+        <div class="prog-item" id="p4"><div class="prog-dot"></div><span id="p4-text" id="p4-text">Images ready: 0 / 5</span></div>
+        <div class="prog-item" id="p5"><div class="prog-dot"></div><span id="p5-text">Done ✓</span></div>
       </div>
     </div>
   </div>
@@ -608,7 +608,13 @@ async function api(payload) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   });
-  const data = await r.json();
+  let data;
+  try {
+    data = await r.json();
+  } catch (_) {
+    // Vercel returned a non-JSON response (e.g. 504 timeout HTML page)
+    throw new Error(r.status === 504 ? 'Request timed out — please try again.' : `Server error (HTTP ${r.status}). Try again.`);
+  }
   if (!r.ok) throw new Error(data.error || 'Request failed');
   return data;
 }
@@ -778,19 +784,38 @@ Return ONLY a JSON array:
     const conceptResult = await api(conceptPayload);
     S.concepts = JSON.parse(conceptResult.text.replace(/```json|```/g, '').trim());
 
+    // Stay on Phase 2 loading screen while images generate — show live counter
     setProgStep(3);
+    document.getElementById('p3-text').textContent = 'Generating images with GPT Image 1…';
     S.images = S.concepts.map(c => ({ concept: c, imageUrl: null }));
-    renderGrid(S.images);
-    goToPhase(3);
+    renderGrid(S.images); // pre-build the grid in the background (hidden in Phase 2)
+
+    let doneCount = 0;
+    const total = S.concepts.length;
+    document.getElementById('p4-text').textContent = `Images ready: 0 / ${total}`;
 
     await Promise.allSettled(
       S.concepts.map((concept, i) =>
         api({ action: 'image', prompt: concept.imagePrompt })
-          .then(d => { S.images[i].imageUrl = d.url; updateCard(i, d.url, null); })
-          .catch(e => { updateCard(i, null, e.message); })
+          .then(d => {
+            S.images[i].imageUrl = d.url;
+            updateCard(i, d.url, null);
+            doneCount++;
+            document.getElementById('p4-text').textContent = `Images ready: ${doneCount} / ${total}`;
+            if (doneCount === 1) setProgStep(4); // activate the counter row after first image
+          })
+          .catch(e => {
+            updateCard(i, null, e.message);
+            doneCount++;
+            document.getElementById('p4-text').textContent = `Images ready: ${doneCount} / ${total}`;
+            if (doneCount === 1) setProgStep(4);
+          })
       )
     );
+
     setProgStep(5);
+    await new Promise(r => setTimeout(r, 600)); // brief pause so user sees "Done ✓"
+    goToPhase(3); // now switch to the fully-loaded design grid
   } catch (e) {
     goToPhase(1); showErr('err1', e.message);
   }
