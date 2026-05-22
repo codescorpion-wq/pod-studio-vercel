@@ -56,22 +56,30 @@ module.exports = async function handler(req, res) {
     // and fileUrl (used as product thumbnail + lifestyle mockup source).
     if (action === 'upload-design') {
       const { imageBase64 } = body;
-      const contents = imageBase64.replace(/^data:image\/\w+;base64,/, '');
-      const pfHeaders = {
+      const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+      const imageBuffer = Buffer.from(base64Data, 'base64');
+      const imageBlob = new Blob([imageBuffer], { type: 'image/png' });
+
+      // Use Printful v2 API with multipart binary upload (v1 JSON+base64 is unreliable)
+      const formData = new FormData();
+      formData.append('file', imageBlob, 'pod-studio-design.png');
+
+      const pfAuthHeaders = {
         'Authorization': `Bearer ${process.env.PRINTFUL_API_KEY}`,
-        'Content-Type': 'application/json',
         ...(process.env.PRINTFUL_STORE_ID ? { 'X-PF-Store-Id': process.env.PRINTFUL_STORE_ID } : {})
       };
-      const response = await fetch('https://api.printful.com/files', {
+
+      const response = await fetch('https://api.printful.com/v2/files', {
         method: 'POST',
-        headers: pfHeaders,
-        body: JSON.stringify({ type: 'default', filename: 'pod-studio-design.png', contents })
+        headers: pfAuthHeaders,   // NO Content-Type — FormData sets it with boundary automatically
+        body: formData
       });
       const data = await response.json();
-      if (!response.ok || data.code !== 200) {
-        return res.status(400).json({ error: data.error?.message || data.result || 'Printful file upload failed' });
+      if (!response.ok) {
+        return res.status(400).json({ error: data.error?.message || data.detail || JSON.stringify(data).slice(0, 300) || 'Printful file upload failed' });
       }
-      return res.status(200).json({ fileId: data.result.id, fileUrl: data.result.url });
+      // v2 response: { id, url, filename, ... } (flat — no .result wrapper)
+      return res.status(200).json({ fileId: data.id, fileUrl: data.url });
     }
 
     // ── STEP 2b: Printful — create sync product ───────────
@@ -122,7 +130,7 @@ module.exports = async function handler(req, res) {
 
       const data = await response.json();
       if (!response.ok || data.code !== 200) {
-        return res.status(400).json({ error: data.error?.message || data.result || 'Printful product creation failed' });
+        return res.status(400).json({ error: data.error?.message || (typeof data.result === 'string' ? data.result : JSON.stringify(data).slice(0, 300)) || 'Printful product creation failed' });
       }
 
       const product = data.result.sync_product;
