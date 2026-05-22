@@ -273,8 +273,8 @@ module.exports = async function handler(req, res) {
         ...(process.env.PRINTFUL_STORE_ID ? { 'X-PF-Store-Id': process.env.PRINTFUL_STORE_ID } : {})
       };
 
-      // Method A: v1 + multipart binary
-      const fdA = new FormData(); fdA.append('file', blob, 'test.png');
+      // Method A: v1 + multipart binary with file[] (array field name)
+      const fdA = new FormData(); fdA.append('file[]', blob, 'test.png');
       const rA = await fetch('https://api.printful.com/files', { method: 'POST', headers: pfH, body: fdA });
       const dA = await rA.json();
 
