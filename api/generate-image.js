@@ -57,12 +57,14 @@ module.exports = async function handler(req, res) {
     if (action === 'upload-design') {
       const { imageBase64 } = body;
       const contents = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+      const pfHeaders = {
+        'Authorization': `Bearer ${process.env.PRINTFUL_API_KEY}`,
+        'Content-Type': 'application/json',
+        ...(process.env.PRINTFUL_STORE_ID ? { 'X-PF-Store-Id': process.env.PRINTFUL_STORE_ID } : {})
+      };
       const response = await fetch('https://api.printful.com/files', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.PRINTFUL_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
+        headers: pfHeaders,
         body: JSON.stringify({ type: 'default', filename: 'pod-studio-design.png', contents })
       });
       const data = await response.json();
@@ -106,7 +108,8 @@ module.exports = async function handler(req, res) {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${process.env.PRINTFUL_API_KEY}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...(process.env.PRINTFUL_STORE_ID ? { 'X-PF-Store-Id': process.env.PRINTFUL_STORE_ID } : {})
         },
         body: JSON.stringify({
           sync_product: {
