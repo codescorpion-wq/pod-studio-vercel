@@ -57,29 +57,41 @@ module.exports = async function handler(req, res) {
     if (action === 'upload-design') {
       const { imageBase64 } = body;
       const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
-      const imageBuffer = Buffer.from(base64Data, 'base64');
-      const imageBlob = new Blob([imageBuffer], { type: 'image/png' });
 
-      // Use Printful v2 API with multipart binary upload (v1 JSON+base64 is unreliable)
-      const formData = new FormData();
-      formData.append('file', imageBlob, 'pod-studio-design.png');
-
-      const pfAuthHeaders = {
-        'Authorization': `Bearer ${process.env.PRINTFUL_API_KEY}`,
-        ...(process.env.PRINTFUL_STORE_ID ? { 'X-PF-Store-Id': process.env.PRINTFUL_STORE_ID } : {})
-      };
-
-      const response = await fetch('https://api.printful.com/v2/files', {
-        method: 'POST',
-        headers: pfAuthHeaders,   // NO Content-Type — FormData sets it with boundary automatically
-        body: formData
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        return res.status(400).json({ error: data.error?.message || data.detail || JSON.stringify(data).slice(0, 300) || 'Printful file upload failed' });
+      // Printful requires a public HTTPS URL — it cannot accept base64 directly.
+      // Step 1: upload image to imgBB to get a temporary public URL.
+      if (!process.env.IMGBB_API_KEY) {
+        return res.status(400).json({ error: 'IMGBB_API_KEY not set in Vercel. Add it from imgbb.com (free).' });
       }
-      // v2 response: { id, url, filename, ... } (flat — no .result wrapper)
-      return res.status(200).json({ fileId: data.id, fileUrl: data.url });
+      const imgbbForm = new FormData();
+      imgbbForm.append('image', base64Data);
+      imgbbForm.append('expiration', '3600'); // auto-delete after 1 hour
+
+      const imgbbRes = await fetch(`https://api.imgbb.com/1/upload?key=${process.env.IMGBB_API_KEY}`, {
+        method: 'POST',
+        body: imgbbForm
+      });
+      const imgbbData = await imgbbRes.json();
+      if (!imgbbData.success) {
+        return res.status(400).json({ error: 'imgBB upload failed: ' + (imgbbData.error?.message || JSON.stringify(imgbbData).slice(0, 200)) });
+      }
+      const publicUrl = imgbbData.data.url;
+
+      // Step 2: give Printful the public URL — it downloads and stores the file on its CDN.
+      const pfResponse = await fetch('https://api.printful.com/files', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.PRINTFUL_API_KEY}`,
+          'Content-Type': 'application/json',
+          ...(process.env.PRINTFUL_STORE_ID ? { 'X-PF-Store-Id': process.env.PRINTFUL_STORE_ID } : {})
+        },
+        body: JSON.stringify({ type: 'default', url: publicUrl, filename: 'pod-studio-design.png' })
+      });
+      const pfData = await pfResponse.json();
+      if (!pfResponse.ok || pfData.code !== 200) {
+        return res.status(400).json({ error: pfData.error?.message || (typeof pfData.result === 'string' ? pfData.result : JSON.stringify(pfData).slice(0, 300)) || 'Printful file upload failed' });
+      }
+      return res.status(200).json({ fileId: pfData.result.id, fileUrl: pfData.result.url });
     }
 
     // ── STEP 2b: Printful — create sync product ───────────
@@ -260,51 +272,6 @@ module.exports = async function handler(req, res) {
       const data = await response.json();
       if (!response.ok) return res.status(response.status).json({ error: data.error_description || data.error || 'Image upload failed' });
       return res.status(200).json({ imageId: data.listing_image_id });
-    }
-
-    // ── DIAGNOSTIC: test all Printful upload methods ─────
-    if (action === 'test-printful') {
-      // Minimal 1x1 red PNG (< 100 bytes)
-      const testB64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADklEQVQI12P4z8BQDwAEgAF/QualIQAAAABJRU5ErkJggg==';
-      const buf = Buffer.from(testB64, 'base64');
-      const blob = new Blob([buf], { type: 'image/png' });
-      const pfH = {
-        'Authorization': `Bearer ${process.env.PRINTFUL_API_KEY}`,
-        ...(process.env.PRINTFUL_STORE_ID ? { 'X-PF-Store-Id': process.env.PRINTFUL_STORE_ID } : {})
-      };
-
-      // Method A: v1 + multipart binary with file[] (array field name)
-      const fdA = new FormData(); fdA.append('file[]', blob, 'test.png');
-      const rA = await fetch('https://api.printful.com/files', { method: 'POST', headers: pfH, body: fdA });
-      const dA = await rA.json();
-
-      // Method B: v1 + JSON contents (base64 string)
-      const rB = await fetch('https://api.printful.com/files', {
-        method: 'POST', headers: { ...pfH, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'default', filename: 'test.png', contents: testB64 })
-      });
-      const dB = await rB.json();
-
-      // Method C: v2 + JSON url (data URI)
-      const rC = await fetch('https://api.printful.com/v2/files', {
-        method: 'POST', headers: { ...pfH, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: 'data:image/png;base64,' + testB64, filename: 'test.png' })
-      });
-      const dC = await rC.json();
-
-      // Method D: v1 + JSON url (data URI)
-      const rD = await fetch('https://api.printful.com/files', {
-        method: 'POST', headers: { ...pfH, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'default', filename: 'test.png', url: 'data:image/png;base64,' + testB64 })
-      });
-      const dD = await rD.json();
-
-      return res.status(200).json({
-        A_v1_multipart:    { status: rA.status, result: dA },
-        B_v1_json_contents:{ status: rB.status, result: dB },
-        C_v2_json_dataurl: { status: rC.status, result: dC },
-        D_v1_json_dataurl: { status: rD.status, result: dD },
-      });
     }
 
     return res.status(400).json({ error: 'Unknown action' });
